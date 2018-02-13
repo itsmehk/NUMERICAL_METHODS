@@ -1,0 +1,152 @@
+// reduced MHD -- Crank-Nicolson
+
+verbosity=0;
+int n = 50;
+real jj1=.2,jj2=.266,eta=1.e-5,nu=1.e-5,dt=1.,T=1000;
+real epsilon=0.1,lambda=0.1,a=.5,b=.7,aa=0.4,m=6.0;
+//real R0=a/epsilon, alpha=.5*((4.*(a^2+b^2)*epsilon-a^2*epsilon^3+2.*a^2*lambda)/(R0^2*epsilon*b^2*a^2)), beta=lambda/(b^2*epsilon);
+
+border C1(t=1.,-1.){x=t;y=sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+border C2(t=-1.,1.){x=t;y=-sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+func Thh=C1(n)+C2(n);
+mesh Th2=buildmesh(Thh);
+mesh Th=adaptmesh(Th2,1./(2.^(m-2)+2.^(2*m-14)+aa),IsMetric=1,nbvx=10000);
+
+// Mesh Plotted//
+//border C1(t=0,2*pi){x=cos(t);y=sin(t);label=1;}
+//func ThMHD=C1(n);//+C2(50)+C3(100);
+//mesh Th=buildmesh(ThMHD);
+plot(Th,wait=1);
+ 
+fespace      Vh(Th,P2); // Finite element space declared//
+
+Vh           Psi, dPsi, Phi, dPhi, J,JN, dJ, W, dW,  v, u,ksi,f5,ksiEX,dksi,dksiEX,Jc,rro,drro,den,rroR0,GS,GS1;
+
+        Jc=( jj1*(1-(x^2+y^2)^2)-jj2*(1-x^2-y^2)^8); //Jc = x^2*(1-x^2-y^2)^3;
+        //Jc=( jj1*(1-(.1*x^2+.1*y^2)^2)-jj2*(1-.1*x^2-.1*y^2)^8); //Jc = x^2*(1-x^2-y^2)^3;
+//              Jc=1-((.56)*(((x)^2+(y)^2))+(.17)*(exp(-1-(((x)^(-2)+(y)^(-2)))))+(6.6)*(exp(-2-(((x)^(2)+(y)^(2))))));
+       //       Jc=1-((.16)*(((x)^2+(y)^2))+(.04)*(exp(-1-(((x)^(-2)+(y)^(-2)))))+(1.6)*(exp(-2-(((x)^(2)+(y)^(2))))));
+        //  Jc=-1;
+              
+        f5=1-(0.01*(x^5)*(exp(-1-(x^2))));
+             //f5=(0.1*(exp(((x-3)^2)/(2*6))));
+
+       
+        den=1+0.1*sin(x)+0.1*cos(y);//Declaring The Density// 
+        //den=1;
+      
+       // den=1-.5*(x*x+y*y);
+       
+        rro=(1.+epsilon*x)*den;  //Declaring R*Den//
+      
+
+
+func ksiex=1.-(x-.5*epsilon*(1.-x^2))^2-((1.-.25*epsilon^2)*(1.+epsilon*x)^2 +lambda*x*(1.+.5*epsilon*x))*(y^2)/(b/a)^2;
+ksiEX=ksiex;
+dksiEX=dx(ksiEX);
+//macro grad(ksi)[dx(ksi),dy(ksi)]//
+//solve GS(ksi,v)=int2d(Th)(grad(ksi)'*grad(v)/(1.+epsilon*x))-int2d(Th)(f5*(a^2/(1.+epsilon*x))*v)+on(1,ksi=0);
+dksi=dx(ksi);
+ //Jc=ksi;
+func         f=0.0;
+ rroR0 = ((rro*(1+epsilon*x))^(-1));
+JN=rroR0*J; // Current in Grad-Shafranov new !!//
+//func temp = rroR0*u
+varf mass(u,v)          = int2d(Th)(u*v);
+varf massDirichlet(u,v) = int2d(Th)(u*v)+ on(1,u=0);
+
+//varf mass_weighted(u,v)=  int2d(Th)(u*v)+ on(1,u=0);
+
+func temp=rroR0*u;
+varf delta(u,v)         = int2d(Th)(dx(u)*dx(v) + dy(u)*dy(v)) + int2d(Th)(f*v); // + on(1,u=0);
+problem deltaDir(Psi,v) =  int2d(Th)(dx(Psi)*dx(v) + dy(Psi)*dy(v)) + int2d(Th)(J*v) + on(1,Psi=0);
+
+varf cpPhi(u,v) =   int2d(Th)( 0.5 * dt *((rro)^(-1))* (dx(Phi)*dy(u) - dy(Phi)*dx(u))*v);//used in A11 and A24// ***//
+varf cpPsi(u,v) = - int2d(Th)( 0.5 * dt *((rro)^(-1))* (dx(Psi)*dy(u) - dy(Psi)*dx(u))*v);//used in A12 //###//
+varf cpJ(u,v)   =   int2d(Th)( 0.5 * dt *((rro))* (dx(JN)*dy(u) - dy(JN)  *dx(u))*v);//used in A21//
+varf cpPsia(u,v)= - int2d(Th)( 0.5 * dt *((rro))* (dx(Psi)*(rroR0*dy(u)+u*dy(rroR0)) - dy(Psi)*((rroR0*dx(u)+u*dx(rroR0))) )*v);//used in A23 //###//
+varf cppDen(u,v) =  int2d(Th)( dt *(rro)^(-2)* (dx(rro)  *dy(u) - dy(rro)  *dx(u))*W*v);//cppDen because its a multiple of delta Phi used in A22//@@@//
+varf cpDen(u,v)  =  int2d(Th)( dt *(rro)^(-2)* (dx(rro)  *dy(Phi) - dy(rro)  *dx(Phi))*u*v);//used in A24//$$$//
+varf cpWDirichlet(u,v) 
+                =  -int2d(Th)(0.5* dt *((rro)^(-1))* (dx(W)  *dy(u) - dy(W)  *dx(u))*v) + on(1,u=0);//used in A22
+
+varf cpGS(u,v) =int2d(Th)((dx(u)*dx(v)+dy(u)*dy(v)))+on(1,u=0);
+varf cpGS1(u,v)=int2d(Th)((dx(u)*dx(v)+dy(u)*dy(v))/(1.+epsilon*x))+on(1,u=0);
+varf cpGS2(u,v)=int2d(Th)((dx(u)*dx(v)+dy(u)*dy(v))/(den* (1.+epsilon*x)))+on(1,u=0);
+varf massDirichletGS1(u,v) = int2d(Th)( (1.+epsilon*x)^(-1)*u*v )+ on(1,u=0);
+varf massDirichletGS2(u,v) = int2d(Th)( (den* (1.+epsilon*x))^(-1)*u*v )+ on(1,u=0);
+
+matrix Md, MdDir, Delta, Delta1, Delta2, CPPhi, CPPsi,CPPsia, CPWDir, CPJ, CPDen,CPPDen, A11, A13, A24, K,A22,MdDirGS1,MdDirGS2;
+
+Md     = mass(Vh,Vh);
+MdDir  = massDirichlet(Vh,Vh);
+MdDirGS1= massDirichletGS1(Vh,Vh);
+MdDirGS2= massDirichletGS2(Vh,Vh);
+
+Delta  = cpGS(Vh,Vh);
+Delta1 = cpGS1(Vh,Vh);
+Delta2 = cpGS2(Vh,Vh);
+
+
+
+
+A13 = -0.5 * dt * eta * Md;
+
+J=Jc; Phi=0.0; W=0.0; deltaDir;
+JN=rroR0*J; // Current in Grad-Shafranov new !!//
+
+ plot(den,value=1,fill=1);
+ plot(den,value=1,fill=1);
+ plot(den,value=1,fill=1);
+
+
+for (int i=0;i<=T/dt;i++) { 
+
+if (i%5==0) plot(J,value=1,fill=1,cmm=i*dt+"[sec]",ps="elip.eps");
+
+
+JN=rroR0*J;
+
+
+CPPhi  = cpPhi(Vh,Vh); //***// //A11 and A24//
+CPPsi  = cpPsi(Vh,Vh);//###// //A12//
+CPPsia = cpPsia(Vh,Vh); //A23
+CPWDir = cpWDirichlet(Vh,Vh); //A22//
+CPJ    = cpJ(Vh,Vh);//used in A21
+CPDen  = cpDen(Vh,Vh);//$$$//A24//
+CPPDen = cppDen(Vh,Vh);//@@@//A22//
+
+
+
+A11 = MdDir + CPPhi;
+A24 = Md + CPPhi +CPDen + 0.5 * dt * nu * Delta1;
+A22 = CPWDir+CPPDen;
+
+
+K = [[A11, CPPsi, A13, 0],[CPJ, A22, CPPsia, A24],[Delta1, 0, MdDirGS1, 0],[0, Delta2, 0, MdDirGS2]];
+
+real[int]    F(4*Vh.ndof), F3(Vh.ndof), U(4*Vh.ndof);
+Vh F1, F2;
+
+varf f1(u,v) = int2d(Th)( dt * (((rro)^(-1))*(dx(Psi)*dy(Phi) - dy(Psi)*dx(Phi)) + eta * (J-Jc))*v) + on(1,u=0);
+varf f2(u,v) = int2d(Th)( dt *( (((rro)^(-1))*(dx(W)*dy(Phi) - dy(W)*dx(Phi)))
+                       -2*dt *(((rro)^(-2))*(dx(rro)*dy(Phi) - dy(rro)*dx(Phi))*W )
+                       + dt*((rro*((dx(Psi)*dy(JN) - dy(Psi)*dx(JN))))))*v
+                       - dt * nu * (dx(W)*dx(v) + dy(W)*dy(v))) + on(1,u=0);
+
+F1[] = f1(0,Vh);
+F2[] = f2(0,Vh);
+F3   = 0.0;
+F = [F1[],F2[],F3,F3];
+
+set(K,solver=UMFPACK);
+U = K^-1*F;
+
+
+[dPsi[],dPhi[],dJ[],dW[]] = U;
+Psi[]+=dPsi[]; Phi[]+=dPhi[]; J[]+=dJ[]; W[]+=dW[]; //rro[]+=drro[];//
+
+
+}
+
+//plot(J,wait=1,fill=1,value=true);//

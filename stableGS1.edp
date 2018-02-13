@@ -1,0 +1,207 @@
+verbosity=0;
+int n = 250;
+real jj1=.2,jj2=.266,eta=1.e-4,nu=1e-4,dt=1,T=1000;
+real epsilon=0.3,lambda=0.1,a=.5,b=.7,aa=0.4,m=6.0;
+
+
+real normeL2Psi,normeL2Phi;
+real ZERO=1;
+
+//Mesh=ellipse
+//border C1(t=1.,-1.){x=t;y=sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+//border C2(t=-1.,1.){x=t;y=-sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+//func Thh=C1(n)+C2(n);
+//mesh Th2=buildmesh(Thh);
+//mesh Th=adaptmesh(Th2,1./(2.^(m-2)+2.^(2*m-14)+aa),IsMetric=1,nbvx=10000);
+
+//Mesh=circle
+border C1(t=0,2*pi){x=cos(t);y=sin(t);label=1;}
+func ThMHD=C1(n);//+C2(50)+C3(100);
+mesh Th=buildmesh(ThMHD);
+
+//Mesh=square
+//border C1(t=0,pi){x=t;y=0;label=1;}
+//border C2(t=0,pi){x=pi;y=t;label=1;}
+//border C3(t=0,pi){x=pi-t;y=pi;label=1;}
+//border C4(t=0,pi){x=0;y=pi-t;label=1;}
+//func Thh=C1(n)+C2(n)+C3(n)+C4(n);
+//mesh Th=buildmesh(Thh);
+
+// Mesh Plotted//
+plot(Th,wait=true);
+ 
+fespace      Vh(Th,P1); // Finite element space declared//
+fespace    Vh1(Th,P0);
+
+Vh           Psi, dPsi, Phi, dPhi, W, dW,v,u,ksi,f5,ksiEX,dksi,dksiEX,rro,drro,den,rroR0,GS,GS1;
+Vh1          J, JN, dJ, Jc,u1,v1;
+
+matrix  Md,Md1, MdJ, Md2, MdDir, Delta, Delta1, Delta2, CPPhi, A12,A23, CPWDir, A21, CPDen,CPPDen;
+matrix  A11,A11spec, A13, A24, A24diag, A24spec,A22,MdDirGS1,MdDirGS2,MdN,McondDirichlet,McondDirichlet1,K;
+//matrix K(Vh1,Vh);
+
+real[int]    F(3*Vh.ndof+Vh1.ndof), U(3*Vh.ndof+Vh1.ndof);
+Vh F2, F3;
+Vh1 F1;
+F3   = 0.0;
+//Vh F1, F2;
+
+         //Jc=( jj1*(1-(x^2+y^2)^2)-jj2*(1-x^2-y^2)^8); //Jc = x^2*(1-x^2-y^2)^3;
+         //Jc=( jj1*(1-(.1*x^2+.1*y^2)^2)-jj2*(1-.1*x^2-.1*y^2)^8); //Jc = x^2*(1-x^2-y^2)^3;
+          Jc=1-((.56)*(((x)^2+(y)^2))+(.17)*(exp(-1-(((x)^(-2)+(y)^(-2)))))+(6.6)*(exp(-2-(((x)^(2)+(y)^(2))))));
+         //  Jc=1-((.16)*(((x)^2+(y)^2))+(.04)*(exp(-1-(((x)^(-2)+(y)^(-2)))))+(1.6)*(exp(-2-(((x)^(2)+(y)^(2))))));
+          // Jc=-1;     
+        //Jc=sin(2*x)*sin(y)*(1-(x^2+y^2)^2);
+
+       
+       //den=1/1+0.*sin(x)+0.5*sin(y);//Declaring The Density// 
+        //den=1.;
+       //den=(1-.5*(x*x+y*y))*(1+0.*sin(x)+0.5*sin(y)) ;
+       //den=1/0.001+0.01*sqrt(((1+epsilon*x)^2+(epsilon*y)^2))+0.01*exp(-sqrt(((1+epsilon*x)^2+(epsilon*y)^2)));
+        den=1/( (1.+epsilon*x)*(1.+epsilon*x) );	
+       
+        rro=(1.+epsilon*x)*den;  //Declaring R*Den//
+        rroR0 =  rro*(1+epsilon*x);
+
+
+
+
+
+varf cpPsia(u1,v)=          int2d(Th)(  .5* dt* (dx(Psi)*dy(v) - dy(Psi)*dx(v) )*u1/rroR0 ); //A23/
+varf cpPsistable(u,v1)  = - int2d(Th)(  .5* dt *(dx(Psi)*dy(u) - dy(Psi)*dx(u) )*v1/rroR0     );//A12/
+varf cpWDirichlet(u,v) =  -int2d(Th)(  .5* dt *(dx(u)  *dy(v)  -dy(u)  *dx(v) )*W/(rro*rro) );
+
+varf massDirichletstable2(u,v) = int2d(Th)(u*v/rro);
+varf massDirichletGS2(u,v)     = int2d(Th)(u*v/rro );
+
+varf cpGS1(u,v)=int2d(Th)( (dx(u)*dx(v)+dy(u)*dy(v))/(1.+epsilon*x) );
+varf cpGS2(u,v)=int2d(Th)( (dx(u)*dx(v)+dy(u)*dy(v))/rro)            ;
+
+varf massDirichletstable(u1,v1)  = int2d(Th)(u1*v1/(1.+epsilon*x));
+varf massDirichletJ(u1,v)       = int2d(Th)(u1*v/(1.+epsilon*x));
+
+//varf massprojJ(u,v)            = int2d(Th)(u*v/(1.+epsilon*x))+on(1,u=0);
+//MdN                            = massprojJ(Vh,Vh);
+
+
+varf  condDirichlet(u,v)= on(1,u=0);
+McondDirichlet=condDirichlet(Vh,Vh);
+
+varf  condDirichlet1(u1,v1)= on(1,u1=0);//boundary for the P0 space
+McondDirichlet1=condDirichlet1(Vh1,Vh1);//''//
+
+Md      = massDirichletstable(Vh1,Vh1);//identitiy for P0 space
+MdJ     =massDirichletJ(Vh1,Vh);
+Md1      = massDirichletstable(Vh,Vh1);
+Md2     = massDirichletstable2(Vh,Vh);
+
+
+
+
+
+
+
+//varf f1(u,v) = int2d(Th)(   dt *(dx(Psi)*dy(Phi) - dy(Psi)*dx(Phi))*v/rroR0 + eta * (J-Jc)/(1.+epsilon*x)*v   ) ;
+varf f1(u,v1) = int2d(Th)(   dt *(dx(Psi)*dy(Phi) - dy(Psi)*dx(Phi))*v1/rroR0 + eta * (J-Jc)/(1.+epsilon*x)*v1   ) ;
+varf f2(u,v) = int2d(Th)(   dt * ( (dx(Phi)  *dy(v) - dy(Phi)  *dx(v))*W/(rro*rro))
+                           -dt * ( dx(Psi)*dy(v) - dy(Psi)*dx(v)  )*J/rroR0
+                          - dt * nu * (dx(W)*dx(v) + dy(W)*dy(v))/rro                   ) ;
+
+
+///////////// 
+// Initialisation
+////////////
+J=Jc; Phi=0.0; W=0.0; 
+problem deltaDir(Psi,v) =  int2d(Th)( (dx(Psi)*dx(v) + dy(Psi)*dy(v)) /(1.+epsilon*x)) 
+                         + int2d(Th)(J*v/(1.+epsilon*x)) + on(1,Psi=0);
+deltaDir;
+
+
+W=0;
+problem deltaDir2(Phi,v) =  int2d(Th)( (dx(Phi)*dx(v) + dy(Phi)*dy(v))/rro) 
+                         + int2d(Th)(W*v/rro) + on(1,Phi=0);
+deltaDir2;
+
+problem projJ(J,v1) =       int2d(Th)( J*v1/(1.+epsilon*x)) 
+                         - int2d(Th)(JN*v1/(1.+epsilon*x)) + on(1,J=0);
+deltaDir2;
+
+
+
+ plot(Phi,value=1,fill=1,dim=3);
+
+/////////////////////////////
+//////////// Boucle en temps
+////////////////////////////
+
+
+
+
+
+for (int i=0;i<=T/dt;i++) { 
+
+
+if (i%10==0) plot(J,value=1,fill=1,dim=3,cmm="J: "+i*dt+"[sec]");
+//if (i%10==0) plot(Psi,value=1,fill=1,dim=2,cmm="Phi: "+i*dt+"[sec]");
+
+JN=J;
+projJ;
+
+
+
+
+normeL2Psi=int2d(Th)( (dx(Psi)^2+dy(Psi)^2)/(1.+epsilon*x));
+normeL2Phi=int2d(Th)((dx(Phi)^2+dy(Phi)^2)/rro);
+if (i%1==0) cout << "it=" << i << ", T=" << i*dt  
+                          <<" ::::  Psi= " << sqrt( normeL2Psi)
+                          << ", Phi "  << sqrt(normeL2Phi)  
+                          << " ::::  Energie totale= " << sqrt( normeL2Psi+normeL2Phi ) <<endl;
+
+
+
+
+Delta1  = cpGS1(Vh,Vh);
+Delta1 = Delta1+McondDirichlet;
+MdDirGS1= MdJ;//
+
+
+Delta2 = cpGS2(Vh,Vh);
+Delta2 = Delta2+McondDirichlet;
+MdDirGS2= massDirichletGS2(Vh,Vh);
+
+A11     = Md1;//+McondDirichlet ;
+A12     = cpPsistable(Vh,Vh1);
+A13      = - ( dt *0.5 * eta * Md + McondDirichlet1);
+
+
+A22     = cpWDirichlet(Vh,Vh);
+A23     = cpPsia(Vh1,Vh); 
+A24diag  = Md2 +  dt * 0.5 * nu * Delta2;
+A24     = A24diag+McondDirichlet ;
+
+
+
+//K = [[A11, A12, A13, 0],[0, Delta2, 0, MdDirGS2],[Delta1, 0, MdDirGS1, 0],[0, A22, A23, A24]];
+K = [[A11, A12, A13, 0],[0, Delta2, 0, MdDirGS2],[Delta1, 0, MdDirGS1, 0],[0, A22, A23, A24]];
+
+
+F1[] = f1(0,Vh1);
+F2[] = f2(0,Vh);
+
+
+F = [F1[],F3[],F3[],F2[]];
+
+set(K,solver=UMFPACK);
+U = K^-1*F;
+[dPsi[],dPhi[],dJ[],dW[]] = U;
+Psi[]+=dPsi[]; Phi[]+=dPhi[]; J[]+=dJ[]; W[]+=dW[]; 
+
+
+
+
+
+}
+
+//plot(J,wait=1,fill=1,dim=3,value=true);//
+
+

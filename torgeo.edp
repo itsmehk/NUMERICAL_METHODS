@@ -1,0 +1,101 @@
+/*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+EMAFF_1 - CEMRACS - 2010 - CIRM - MARSEILLE
+Resolution of the Grad-Shafranov equation in 2D
+Finite Element in space
+Ref : 1- Bézier surfaces and finite elements for MHD simulations : O. CZARNY, 
+	     G. HUYSMANS. Journal of Computational Physics 227 (2008) 7423–7445
+      2- Nonlinear Magnetohydrodynamics : D. BISKAMP
+      3- Numerical Solution of Grad-Shafranov Equation for the Distribution of 
+	     Magnetic Flux in Nuclear Fusion Devices : S. H. AYDIN, M. TEZER-SEZGIN. 
+	     Turkish J. Eng. Env. Sci. 32 (2008) , 265 – 275.
+29/07/2010
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+//===============================
+// Boundary and Mesh CONSTRUCTION
+//===============================
+verbosity=0;
+int n;
+real epsilon=.3,lambda=0.,a=.5,b=.7,aa;
+border C1(t=1.,-1.){x=t;y=sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+border C2(t=-1.,1.){x=t;y=-sqrt((1.-(t-.5*epsilon*(1.-t^2))^2)/((1.-.25*epsilon^2)*(1.+epsilon*t)^2 +lambda*t*(1.+.5*epsilon*t))*(b/a)^2);label=1;}
+int Nraf=7;
+real[int] L2ERR(Nraf-1);
+real[int] L2DERR(Nraf-1);
+int[int] NBE(Nraf-1);// Number of Boundary Edges
+for (int m=7;m<=Nraf;m++){
+n=2^m;
+if (m==2 | m==3){
+aa=0.;
+n=n-2;}
+if (m==4)
+aa=-0.3;
+if (m==5 | m==6)
+aa=.4;
+if (m==7)
+aa=.6;
+if (m==8)
+aa=.1;
+if (m==9)
+aa=-6.;
+func Thh=C1(n)+C2(n);
+mesh Th2=buildmesh(Thh);
+mesh Th=adaptmesh(Th2,1./(2.^(m-2)+2.^(2*m-14)+aa),IsMetric=1,nbvx=100000);
+plot(Th);//,cmm="Nx="+Th.nbe);
+//===========
+// Data Space
+//===========
+fespace Vh(Th,P1);
+Vh ksi,v,f,ksiEX,dksi,dksiEX;
+//=================
+// Scheme Parameter
+//=================
+real R0=a/epsilon,alpha=.5*((4.*(a^2+b^2)*epsilon-a^2*epsilon^3+2.*a^2*lambda)/(R0^2*epsilon*b^2*a^2)),beta=lambda/(b^2*epsilon);
+//========================
+// Initial data & Function
+//========================
+func rr=x;
+f=alpha*R0^2*(1.+epsilon*rr)^2+beta;
+func ksiex=1.-(x-.5*epsilon*(1.-x^2))
+^2-((1.-.25*epsilon^2)*(1.+epsilon*x)^2 +lambda*x*(1.+.5*epsilon*x))*(y^2)/(b/a)^2;
+ksiEX=ksiex;
+dksiEX=dx(ksiEX);
+macro grad(ksi)[dx(ksi),dy(ksi)]//
+//=====================================
+// Resolution of Grad-Shafranov Problem
+//=====================================
+solve GS(ksi,v)=int2d(Th)(grad(ksi)'*grad(v)/(1.+epsilon*x))-int2d(Th)(f*(a^2/(1.+epsilon*x))*v)+on(1,ksi=0);
+dksi=dx(ksi);
+//======
+// Plots
+//======
+//plot(ksiEX,wait=1,fill=1);
+plot(ksi,wait=1,fill=1);
+//plot(dksi,wait=1,fill=1);
+//cout <<"||ksi-ksiex||_L^2/||ksiex||_L^2=" << sqrt(int2d(Th)(square(ksi-ksiex)))/sqrt(int2d(Th)(square(ksiex))) << endl;
+L2ERR[m-2]=sqrt(int2d(Th)(square(ksi-ksiEX)))/sqrt(int2d(Th)(square(ksiEX)));
+NBE[m-2]=Th.nbe;
+L2DERR[m-2]=sqrt(int2d(Th)(square(dksi-dksiEX)))/sqrt(int2d(Th)(square(dksiEX)));
+}
+{
+    ofstream gnu("L2ERR.gp");
+    for (int n=1;n<Nraf;n++)
+    {
+        gnu << NBE[n-1] << " " << L2ERR[n-1] << endl;
+    }
+}
+{
+    ofstream gnu("L2DERR.gp");
+    for (int n=1;n<Nraf;n++)
+    {
+        gnu << NBE[n-1] << " " << L2DERR[n-1] << endl;
+    }
+}
+exec("echo 'set logscale; set title \"Convergence Order\";set xlabel \"log10(Nx)\";set ylabel \"log10(E(Dx(ksi)))\"\
+plot \"L2DERR.gp\" w lp \
+pause 10\
+quit \' | gnuplot");
+
+exec("echo 'set logscale; set title \"Convergence Order\";set xlabel \"log10(Nx)\";set ylabel \"log10(E(ksi))\"\
+plot \"L2ERR.gp\" w lp \
+pause 10\
+quit \' | gnuplot");
